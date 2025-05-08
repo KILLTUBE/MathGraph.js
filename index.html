@@ -125,6 +125,12 @@
       justify-content: space-between;
       align-items: center;
     }
+    .code-display {
+    	display: none; padding: 10px; background-color: #f0f0f0; border: 1px solid #ccc; margin-top: 5px; font-family: monospace;
+    }
+    .eye-icon {
+    	cursor: pointer; margin-right: 10px;
+    }
   </style>
 </head>
 <body>
@@ -176,6 +182,11 @@
       // Turn (x)x into (x)*x just based on the brackets
       js = js.replace(/\)(\w)/g, ')*$1');
       js = js.replace(/\{(\w+)\}/g, '$1');
+      // Turn (1 / x)*x*1y-1 into (1 / x)*x*1*y-1
+      js = js.replace(/(\d)([a-z])/g, '$1*$2');
+      // Turn (1 / x)*x*\left(1-y\right) into (1 / x)*x*(1-y)
+      js = js.replace(/\\left\(/g, '(');
+      js = js.replace(/\\right\)/g, ')');
       return js;
     }
     function getVariables(expression) {
@@ -189,10 +200,9 @@
       const [variable, value] = latex.split('=').map(s => s.trim());
       return { variable, value: parseFloat(value) || 1 };
     }
-    const constants = {
-      e: 'Math.E',
-      pi: 'Math.PI'
-    };
+
+    const constants = { e: 'Math.E', pi: 'Math.PI' };
+
     class MathInterface {
       constructor() {
         this.expressions = [];
@@ -254,7 +264,7 @@
           const mathX = this.canvasToMathX(event.offsetX);
           let info = `x = ${mathX.toFixed(2)}\n`;
           this.expressions.forEach((expr, index) => {
-            if (!expr.jsFunction || expr.isAssignment) {
+            if (!expr.jsFunction || expr.isAssignment || !expr.visible) {
               info += `f${index+1}(x) = ${expr.isAssignment ? 'assignment' : 'error'}\n`;
               return;
             }
@@ -335,7 +345,7 @@
         const xValues = Array.from({length: numPoints}, (_, i) => this.xMin + i * (this.xMax - this.xMin) / (numPoints - 1));
         const existingSliders = new Set(this.sliders.map(s => s.variable));
         this.expressions.forEach(expr => {
-          if (!expr.jsFunction || expr.isAssignment) return;
+          if (!expr.jsFunction || expr.isAssignment || !expr.visible) return;
           const missingVars = expr.variables.filter(v => !existingSliders.has(v));
           const hasMissingVars = missingVars.length > 0;
           const styles = hasMissingVars ? [{lineWidth: 3, strokeStyle: 'red'}, {lineWidth: 1, strokeStyle: expr.colorInput.value}] : [{lineWidth: 1, strokeStyle: expr.colorInput.value}];
@@ -446,21 +456,39 @@
         this.jsFunction = null;
         this.isAssignment = false;
         this.assignment = null;
+        this.visible = true;
         this.colorInput.addEventListener('input', () => {
           window.dispatchEvent(new CustomEvent('expressionChanged'));
         });
+        this.eyeIcon.addEventListener('click', () => {
+          this.visible = !this.visible;
+          this.eyeIcon.textContent = this.visible ? '👁️' : '🚫';
+          window.dispatchEvent(new CustomEvent('expressionChanged'));
+        });
+        this.showCodeButton.addEventListener('click', () => {
+          const codeDisplay = this.dom.querySelector('.code-display');
+          if (codeDisplay.style.display === 'none') {
+            const latex = this.mathField.latex();
+            const js = this.jsExpression;
+            codeDisplay.textContent = `LaTeX: ${latex}\nJS: ${js}`;
+            codeDisplay.style.display = 'block';
+          } else {
+            codeDisplay.style.display = 'none';
+          }
+        });
       }
+
       render() {
         this.mathSpan = Span({ class: 'math-field' });
         this.colorInput = Input({ type: 'color', value: '#000000' });
-        this.showCodeButton = Button({ class: 'button', onclick: () => {
-          const latex = this.mathField.latex();
-          const js = this.jsExpression;
-          alert(`LaTeX: ${latex}\nJS: ${js}`);
-        }}, 'Show Code');
-        this.deleteButton = Button({ class: 'button delete-button', onclick: () => this.parent.removeExpression(this) }, 'Delete');
-        return Div({ class: 'expression-container' }, this.mathSpan, this.colorInput, this.showCodeButton, this.deleteButton);
+        this.eyeIcon = Span({ class: 'eye-icon' }, '👁️');
+        this.showCodeButton = Button({ class: 'button' }, 'Show Code');
+        this.deleteButton = Button({ class: 'button delete-button' }, 'Delete');
+        this.codeDisplay = Div({ class: 'code-display' });
+        const container = Div({ class: 'expression-container' }, this.eyeIcon, this.mathSpan, this.colorInput, this.showCodeButton, this.deleteButton, this.codeDisplay);
+        return container;
       }
+
       onEdit() {
         const latex = this.mathField.latex();
         this.isAssignment = isAssignmentExpression(latex);
@@ -480,10 +508,11 @@
             return true;
           });
           this.jsExpression = jsExpr;
+          const code = `return ${this.jsExpression}`;
           try {
-            this.jsFunction = new Function('x', ...this.variables, `return ${this.jsExpression}`);
+            this.jsFunction = new Function('x', ...this.variables, code);
           } catch (e) {
-            console.error('Error creating function:', e);
+            console.error('Error creating function:', e, 'code', code);
             this.jsFunction = null;
           }
         }
@@ -508,7 +537,7 @@
         this.stepInput = Input({ type: 'number', class: 'slider-input', value: 0.1 });
         this.valueInput = Input({ type: 'number', class: 'slider-input', value: this.initialValue });
         this.rangeInput = Input({ type: 'range', class: 'range-slider', min: -10, max: 10, step: 0.1, value: this.initialValue });
-        this.deleteButton = Button({ class: 'button delete-button', onclick: () => this.parent.removeSlider(this) }, 'Delete');
+        this.deleteButton = Button({ class: 'button delete-button' }, 'Delete');
         return Div({ class: 'slider-container' },
           this.label,
           Div({}, 'Min: ', this.minInput),
@@ -518,6 +547,9 @@
           this.rangeInput,
           this.deleteButton
         );
+      }
+      destroy() {
+        this.parent.removeSlider(this);
       }
       setupEventListeners() {
         this.rangeInput.addEventListener('input', () => {
@@ -553,6 +585,7 @@
           this.rangeInput.step = this.stepInput.value;
           window.dispatchEvent(new CustomEvent('sliderChanged'));
         });
+        this.deleteButton.addEventListener('click', () => this.destroy());
       }
     }
     const app = new MathInterface();
