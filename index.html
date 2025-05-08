@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MathGraph.js</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/mathquill/0.10.1-a/mathquill.min.css">
+  <style>
+    #graph {
+      border: 1px solid black;
+      margin-top: 20px;
+    }
+    #sliders div {
+      margin: 10px 0;
+    }
+    #math-input {
+      font-size: 1.2em;
+    }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      display: flex;
+      background-color: #f5f5f5;
+    }
+    .sidebar {
+      width: 350px;
+      padding: 20px;
+      background-color: #fff;
+      border-right: 2px solid #ddd;
+      overflow-y: auto;
+      height: 100vh;
+    }
+    .header {
+      font-size: 24px;
+      font-weight: bold;
+      margin-bottom: 20px;
+      color: #333;
+    }
+    .section {
+      margin-bottom: 20px;
+    }
+    .section-title {
+      font-size: 18px;
+      font-weight: bold;
+      margin-bottom: 10px;
+      color: #555;
+    }
+    .expression-container {
+      border: 1px solid #ccc;
+      padding: 10px;
+      margin-bottom: 10px;
+      background-color: #fafafa;
+      border-radius: 5px;
+      display: flex;
+      align-items: center;
+    }
+    .math-field {
+      width: 60%;
+      display: inline-block;
+    }
+    .button {
+      padding: 5px 10px;
+      margin: 5px;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .button:hover {
+      background-color: #0056b3;
+    }
+    .delete-button {
+      background-color: #dc3545;
+    }
+    .delete-button:hover {
+      background-color: #c82333;
+    }
+    .slider-container {
+      border: 1px solid #ccc;
+      padding: 10px;
+      margin-bottom: 10px;
+      background-color: #fafafa;
+      border-radius: 5px;
+    }
+    .slider-label {
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+    .slider-input {
+      width: 60px;
+      margin-right: 10px;
+    }
+    .range-slider {
+      width: 100%;
+      margin-top: 5px;
+    }
+    .graph-container {
+      position: absolute;
+      left: 350px;
+      top: 0;
+      width: calc(100% - 350px);
+      height: 100%;
+      background-color: #fff;
+    }
+    .tooltip {
+      position: absolute;
+      background-color: rgba(0, 0, 0, 0.8);
+      color: white;
+      padding: 5px 10px;
+      border-radius: 3px;
+      pointer-events: none;
+      font-size: 12px;
+      white-space: pre;
+    }
+    .prompts {
+      margin-top: 20px;
+    }
+    .prompt {
+      padding: 10px;
+      background-color: #f0f0f0;
+      border: 1px solid #ccc;
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathquill/0.10.1-a/mathquill.min.js"></script>
+  <script>
+    // JSX-like helper
+    function genJsx(tagname) {
+      return (props, ...children) => {
+        const ret = document.createElement(tagname);
+        if (props) {
+          if (props.style) {
+            Object.assign(ret.style, props.style);
+            delete props.style;
+          }
+          if (props.class) {
+            ret.className = props.class;
+            delete props.class;
+          }
+          Object.assign(ret, props);
+        }
+        children = children.flat();
+        ret.append(...children);
+        return ret;
+      };
+    }
+    const Div = genJsx("div");
+    const Button = genJsx("button");
+    const Input = genJsx("input");
+    const Span = genJsx("span");
+    // Enhance input elements to return numbers
+    HTMLInputElement.prototype.valueOf = function() {
+      if (this.type === 'number' || this.type === 'range') {
+        return this.valueAsNumber;
+      }
+      return this.value;
+    }
+    function latexToJs(latex) {
+      let js = latex;
+      js = js.replace(/\\sin/g, 'Math.sin');
+      js = js.replace(/\\cos/g, 'Math.cos');
+      js = js.replace(/\\tan/g, 'Math.tan');
+      js = js.replace(/\\cdot/g, '*');
+      js = js.replace(/\\frac\{(\w+)\}\{(\w+)\}/g, '($1 / $2)');
+      js = js.replace(/\\sqrt\{(\w+)\}/g, 'Math.sqrt($1)');
+      js = js.replace(/\\pi/g, 'Math.PI');
+      js = js.replace(/\\e/g, 'Math.E');
+      js = js.replace(/\^/g, '**');
+      // Turn (x)x into (x)*x just based on the brackets
+      js = js.replace(/\)(\w)/g, ')*$1');
+      js = js.replace(/\{(\w+)\}/g, '$1');
+      return js;
+    }
+    function getVariables(expression) {
+      const matches = expression.match(/\b[a-z]\b/g) || [];
+      return [...new Set(matches)].filter(id => id !== 'x');
+    }
+    function isAssignmentExpression(latex) {
+      return /^\s*[a-z]\s*=\s*.+$/.test(latex);
+    }
+    function parseAssignment(latex) {
+      const [variable, value] = latex.split('=').map(s => s.trim());
+      return { variable, value: parseFloat(value) || 1 };
+    }
+    const constants = {
+      e: 'Math.E',
+      pi: 'Math.PI'
+    };
+    class MathInterface {
+      constructor() {
+        this.expressions = [];
+        this.sliders = [];
+        this.xMin = -10;
+        this.xMax = 10;
+        this.yMin = -10;
+        this.yMax = 10;
+        this.dom = this.render();
+        this.addExpression();
+        window.addEventListener('expressionChanged', () => this.handleExpressionChange());
+        window.addEventListener('sliderChanged', () => this.updateGraph());
+        window.addEventListener('resize', () => {
+          this.canvas.width = window.innerWidth - 350;
+          this.canvas.height = window.innerHeight;
+          this.updateGraph();
+        });
+      }
+      render() {
+        this.sidebar = Div({ class: 'sidebar' },
+          Div({ class: 'header' }, 'Math Graphing Tool'),
+          Div({ class: 'section' },
+            Div({ class: 'section-title' }, 'Expressions', Span({ style: { fontSize: '0.8em', color: '#666' } }, ' (e.g., a * x^2 + b, sin(x), a=3)')),
+            this.expressionsContainer = Div({ class: 'expressions' }),
+            Button({ class: 'button', onclick: () => this.addExpression() }, 'Add Expression')
+          ),
+          Div({ class: 'section' },
+            Div({ class: 'section-title' }, 'Sliders'),
+            this.slidersContainer = Div({ class: 'sliders' })
+          ),
+          this.promptsContainer = Div({ class: 'prompts' })
+        );
+        this.graph = Div({ class: 'graph-container' });
+        this.canvas = document.createElement('canvas');
+        this.canvas.style.width = '100%';
+        this.canvas.style.height = '100%';
+        this.canvas.width = window.innerWidth - 350;
+        this.canvas.height = window.innerHeight;
+        this.graph.appendChild(this.canvas);
+        this.ctx = this.canvas.getContext('2d');
+        this.tooltip = Div({ class: 'tooltip' }, 'Hover over graph');
+        this.tooltip.style.display = 'none';
+        this.setupEventListeners();
+        return Div({}, this.sidebar, this.graph, this.tooltip);
+      }
+      setupEventListeners() {
+        this.canvas.addEventListener('wheel', (event) => {
+          event.preventDefault();
+          const zoomFactor = event.deltaY > 0 ? 1.1 : 0.9;
+          const mathX = this.canvasToMathX(event.offsetX);
+          const mathY = this.canvasToMathY(event.offsetY);
+          this.xMin = mathX - (mathX - this.xMin) * zoomFactor;
+          this.xMax = mathX + (this.xMax - mathX) * zoomFactor;
+          this.yMin = mathY - (mathY - this.yMin) * zoomFactor;
+          this.yMax = mathY + (this.yMax - mathY) * zoomFactor;
+          this.updateGraph();
+        });
+        this.canvas.addEventListener('mousemove', (event) => {
+          const mathX = this.canvasToMathX(event.offsetX);
+          let info = `x = ${mathX.toFixed(2)}\n`;
+          this.expressions.forEach((expr, index) => {
+            if (!expr.jsFunction || expr.isAssignment) {
+              info += `f${index+1}(x) = ${expr.isAssignment ? 'assignment' : 'error'}\n`;
+              return;
+            }
+            const scopeValues = expr.variables.map(v => {
+              const slider = this.sliders.find(s => s.variable === v);
+              return slider ? parseFloat(slider.valueInput.value) : 1;
+            });
+            try {
+              const y = expr.jsFunction(mathX, ...scopeValues);
+              if (isFinite(y)) {
+                info += `f${index+1}(x) = ${y.toFixed(2)}\n`;
+              } else {
+                info += `f${index+1}(x) = undefined\n`;
+              }
+            } catch (e) {
+              info += `f${index+1}(x) = error\n`;
+            }
+          });
+          this.tooltip.textContent = info;
+          this.tooltip.style.display = 'block';
+          this.tooltip.style.left = `${event.clientX + 10}px`;
+          this.tooltip.style.top = `${event.clientY + 10}px`;
+        });
+        this.canvas.addEventListener('mouseleave', () => {
+          this.tooltip.style.display = 'none';
+        });
+      }
+      mathToCanvasX(x) {
+        return (x - this.xMin) / (this.xMax - this.xMin) * this.canvas.width;
+      }
+      mathToCanvasY(y) {
+        return (this.yMax - y) / (this.yMax - this.yMin) * this.canvas.height;
+      }
+      canvasToMathX(canvasX) {
+        return this.xMin + (canvasX / this.canvas.width) * (this.xMax - this.xMin);
+      }
+      canvasToMathY(canvasY) {
+        return this.yMax - (canvasY / this.canvas.height) * (this.yMax - this.yMin);
+      }
+      updateGraph() {
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        // Draw grid lines
+        const xStep = (this.xMax - this.xMin) / 10;
+        const yStep = (this.yMax - this.yMin) / 10;
+        this.ctx.strokeStyle = '#ddd';
+        for (let x = Math.ceil(this.xMin / xStep) * xStep; x <= this.xMax; x += xStep) {
+          const canvasX = this.mathToCanvasX(x);
+          this.ctx.beginPath();
+          this.ctx.moveTo(canvasX, 0);
+          this.ctx.lineTo(canvasX, this.canvas.height);
+          this.ctx.stroke();
+        }
+        for (let y = Math.ceil(this.yMin / yStep) * yStep; y <= this.yMax; y += yStep) {
+          const canvasY = this.mathToCanvasY(y);
+          this.ctx.beginPath();
+          this.ctx.moveTo(0, canvasY);
+          this.ctx.lineTo(this.canvas.width, canvasY);
+          this.ctx.stroke();
+        }
+        // Draw axes
+        this.ctx.strokeStyle = 'black';
+        const y0 = this.mathToCanvasY(0);
+        if (y0 >= 0 && y0 <= this.canvas.height) {
+          this.ctx.beginPath();
+          this.ctx.moveTo(0, y0);
+          this.ctx.lineTo(this.canvas.width, y0);
+          this.ctx.stroke();
+        }
+        const x0 = this.mathToCanvasX(0);
+        if (x0 >= 0 && x0 <= this.canvas.width) {
+          this.ctx.beginPath();
+          this.ctx.moveTo(x0, 0);
+          this.ctx.lineTo(x0, this.canvas.height);
+          this.ctx.stroke();
+        }
+        // Plot functions
+        const numPoints = 1000;
+        const xValues = Array.from({length: numPoints}, (_, i) => this.xMin + i * (this.xMax - this.xMin) / (numPoints - 1));
+        const existingSliders = new Set(this.sliders.map(s => s.variable));
+        this.expressions.forEach(expr => {
+          if (!expr.jsFunction || expr.isAssignment) return;
+          const missingVars = expr.variables.filter(v => !existingSliders.has(v));
+          const hasMissingVars = missingVars.length > 0;
+          const styles = hasMissingVars ? [{lineWidth: 3, strokeStyle: 'red'}, {lineWidth: 1, strokeStyle: expr.colorInput.value}] : [{lineWidth: 1, strokeStyle: expr.colorInput.value}];
+          styles.forEach(style => {
+            this.ctx.lineWidth = style.lineWidth;
+            this.ctx.strokeStyle = style.strokeStyle;
+            this.ctx.beginPath();
+            let firstPoint = true;
+            const scopeValues = expr.variables.map(v => {
+              const slider = this.sliders.find(s => s.variable === v);
+              return slider ? parseFloat(slider.valueInput.value) : 1;
+            });
+            for (const x of xValues) {
+              try {
+                const y = expr.jsFunction(x, ...scopeValues);
+                if (isFinite(y)) {
+                  const canvasX = this.mathToCanvasX(x);
+                  const canvasY = this.mathToCanvasY(y);
+                  if (firstPoint) {
+                    this.ctx.moveTo(canvasX, canvasY);
+                    firstPoint = false;
+                  } else {
+                    this.ctx.lineTo(canvasX, canvasY);
+                  }
+                } else {
+                  firstPoint = true;
+                }
+              } catch (e) {
+                console.error(e);
+                firstPoint = true;
+              }
+            }
+            this.ctx.stroke();
+          });
+        });
+      }
+      addExpression() {
+        const expr = new Expression(this);
+        this.expressions.push(expr);
+        this.expressionsContainer.append(expr.dom);
+      }
+      removeExpression(expr) {
+        const index = this.expressions.indexOf(expr);
+        if (index > -1) {
+          this.expressions.splice(index, 1);
+          expr.dom.remove();
+          this.updateGraph();
+        }
+      }
+      addSlider(variable, initialValue = 1) {
+        if (this.sliders.some(s => s.variable === variable)) return;
+        const slider = new Slider(this, variable, initialValue);
+        this.sliders.push(slider);
+        this.slidersContainer.append(slider.dom);
+        this.updateGraph();
+      }
+      removeSlider(slider) {
+        const index = this.sliders.indexOf(slider);
+        if (index > -1) {
+          this.sliders.splice(index, 1);
+          slider.dom.remove();
+          this.updateGraph();
+        }
+      }
+      handleExpressionChange() {
+        const allVariables = new Set();
+        this.expressions.forEach(expr => {
+          if (expr.isAssignment) {
+            const { variable, value } = expr.assignment;
+            this.addSlider(variable, value);
+          } else {
+            expr.variables.forEach(v => allVariables.add(v));
+          }
+        });
+        const existingSliders = this.sliders.map(s => s.variable);
+        const newVars = Array.from(allVariables).filter(v => !existingSliders.includes(v));
+        this.promptsContainer.innerHTML = '';
+        newVars.forEach(v => {
+          const promptDiv = Div({ class: 'prompt' },
+            `Do you want to generate variable ${v}?`,
+            Button({ onclick: () => {
+              this.addSlider(v);
+              promptDiv.remove();
+            }}, 'Yes'),
+            Button({ onclick: () => {
+              promptDiv.remove();
+            }}, 'No')
+          );
+          this.promptsContainer.append(promptDiv);
+        });
+        this.updateGraph();
+      }
+    }
+    /**
+     * Represents a single mathematical expression input.
+     */
+    class Expression {
+      constructor(parent) {
+        this.parent = parent;
+        this.dom = this.render();
+        this.mathField = MathQuill.getInterface(2).MathField(this.mathSpan, {
+          handlers: {
+            edit: () => this.onEdit()
+          }
+        });
+        this.variables = [];
+        this.jsExpression = '';
+        this.jsFunction = null;
+        this.isAssignment = false;
+        this.assignment = null;
+        this.colorInput.addEventListener('input', () => {
+          window.dispatchEvent(new CustomEvent('expressionChanged'));
+        });
+      }
+      render() {
+        this.mathSpan = Span({ class: 'math-field' });
+        this.colorInput = Input({ type: 'color', value: '#000000' });
+        this.showCodeButton = Button({ class: 'button', onclick: () => {
+          const latex = this.mathField.latex();
+          const js = this.jsExpression;
+          alert(`LaTeX: ${latex}\nJS: ${js}`);
+        }}, 'Show Code');
+        this.deleteButton = Button({ class: 'button delete-button', onclick: () => this.parent.removeExpression(this) }, 'Delete');
+        return Div({ class: 'expression-container' }, this.mathSpan, this.colorInput, this.showCodeButton, this.deleteButton);
+      }
+      onEdit() {
+        const latex = this.mathField.latex();
+        this.isAssignment = isAssignmentExpression(latex);
+        if (this.isAssignment) {
+          this.assignment = parseAssignment(latex);
+          this.jsFunction = null;
+          this.variables = [];
+        } else {
+          let jsExpr = latexToJs(latex);
+          const definedVariables = new Set(this.parent.sliders.map(s => s.variable));
+          const potentialVariables = getVariables(jsExpr);
+          this.variables = potentialVariables.filter(v => {
+            if (constants[v] && !definedVariables.has(v)) {
+              jsExpr = jsExpr.replace(new RegExp(`\\b${v}\\b`, 'g'), constants[v]);
+              return false;
+            }
+            return true;
+          });
+          this.jsExpression = jsExpr;
+          try {
+            this.jsFunction = new Function('x', ...this.variables, `return ${this.jsExpression}`);
+          } catch (e) {
+            console.error('Error creating function:', e);
+            this.jsFunction = null;
+          }
+        }
+        window.dispatchEvent(new CustomEvent('expressionChanged'));
+      }
+    }
+    /**
+     * Represents a slider for a variable.
+     */
+    class Slider {
+      constructor(parent, variable, initialValue = 1) {
+        this.parent = parent;
+        this.variable = variable;
+        this.initialValue = initialValue;
+        this.dom = this.render();
+        this.setupEventListeners();
+      }
+      render() {
+        this.label = Div({ class: 'slider-label' }, `Variable: ${this.variable}`);
+        this.minInput = Input({ type: 'number', class: 'slider-input', value: -10 });
+        this.maxInput = Input({ type: 'number', class: 'slider-input', value: 10 });
+        this.stepInput = Input({ type: 'number', class: 'slider-input', value: 0.1 });
+        this.valueInput = Input({ type: 'number', class: 'slider-input', value: this.initialValue });
+        this.rangeInput = Input({ type: 'range', class: 'range-slider', min: -10, max: 10, step: 0.1, value: this.initialValue });
+        this.deleteButton = Button({ class: 'button delete-button', onclick: () => this.parent.removeSlider(this) }, 'Delete');
+        return Div({ class: 'slider-container' },
+          this.label,
+          Div({}, 'Min: ', this.minInput),
+          Div({}, 'Max: ', this.maxInput),
+          Div({}, 'Step: ', this.stepInput),
+          Div({}, 'Value: ', this.valueInput),
+          this.rangeInput,
+          this.deleteButton
+        );
+      }
+      setupEventListeners() {
+        this.rangeInput.addEventListener('input', () => {
+          this.valueInput.value = this.rangeInput.value;
+          window.dispatchEvent(new CustomEvent('sliderChanged'));
+        });
+        this.valueInput.addEventListener('input', () => {
+          const value = parseFloat(this.valueInput.value);
+          const min = parseFloat(this.minInput.value);
+          const max = parseFloat(this.maxInput.value);
+          if (value < min) this.valueInput.value = min;
+          if (value > max) this.valueInput.value = max;
+          this.rangeInput.value = this.valueInput.value;
+          window.dispatchEvent(new CustomEvent('sliderChanged'));
+        });
+        this.minInput.addEventListener('input', () => {
+          this.rangeInput.min = this.minInput.value;
+          if (parseFloat(this.valueInput.value) < parseFloat(this.minInput.value)) {
+            this.valueInput.value = this.minInput.value;
+            this.rangeInput.value = this.minInput.value;
+          }
+          window.dispatchEvent(new CustomEvent('sliderChanged'));
+        });
+        this.maxInput.addEventListener('input', () => {
+          this.rangeInput.max = this.maxInput.value;
+          if (parseFloat(this.valueInput.value) > parseFloat(this.maxInput.value)) {
+            this.valueInput.value = this.maxInput.value;
+            this.rangeInput.value = this.maxInput.value;
+          }
+          window.dispatchEvent(new CustomEvent('sliderChanged'));
+        });
+        this.stepInput.addEventListener('input', () => {
+          this.rangeInput.step = this.stepInput.value;
+          window.dispatchEvent(new CustomEvent('sliderChanged'));
+        });
+      }
+    }
+    const app = new MathInterface();
+    document.body.append(app.dom);
+    window.app = app;
+  </script>
+</body>
+</html>
