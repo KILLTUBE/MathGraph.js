@@ -1,0 +1,15 @@
+{
+  "type": "module",
+  "name": "@killtube/mathgraph.js",
+  "version": "0.0.1",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Hermann Rolfes (kungfooman)",
+  "license": "MIT",
+  "description": "A simple math graphing tool",
+  "dependencies": {
+    "mathlive": "^0.98.6"
+  }
+}
