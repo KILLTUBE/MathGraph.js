@@ -55,6 +55,9 @@
       display: flex;
       align-items: center;
     }
+    .expression-container.error {
+      border-color: red;
+    }
     .math-field {
       width: 60%;
       display: inline-block;
@@ -127,10 +130,31 @@
       align-items: center;
     }
     .code-display {
-      display: none; padding: 10px; background-color: #f0f0f0; border: 1px solid #ccc; margin-top: 5px; font-family: monospace;
+      display: none;
+      padding: 10px;
+      background-color: #f0f0f0;
+      border: 1px solid #ccc;
+      margin-top: 5px;
+      font-family: monospace;
     }
     .eye-icon {
-      cursor: pointer; margin-right: 10px;
+      cursor: pointer;
+      margin-right: 10px;
+    }
+    .error-message {
+      color: red;
+      margin-top: 5px;
+      display: none;
+    }
+    .resizer {
+      position: absolute;
+      top: 0;
+      width: 5px;
+      height: 100%;
+      background-color: #ddd;
+      cursor: col-resize;
+      user-select: none;
+      z-index: 10;
     }
   </style>
 </head>
@@ -220,6 +244,7 @@
     }
     class MathInterface {
       constructor() {
+        this.sidebarWidth = 350;
         this.expressions = [];
         this.sliders = [];
         this.xMin = -10;
@@ -231,13 +256,13 @@
         window.addEventListener('expressionChanged', () => this.handleExpressionChange());
         window.addEventListener('sliderChanged', () => this.updateGraph());
         window.addEventListener('resize', () => {
-          this.canvas.width = window.innerWidth - 350;
+          this.canvas.width = window.innerWidth - this.sidebarWidth;
           this.canvas.height = window.innerHeight;
           this.updateGraph();
         });
       }
       render() {
-        this.sidebar = Div({ class: 'sidebar' },
+        this.sidebar = Div({ class: 'sidebar', style: { width: this.sidebarWidth + 'px' } },
           Div({ class: 'header' }, 'Math Graphing Tool'),
           Div({ class: 'section' },
             Div({ class: 'section-title' }, 'Expressions', Span({ style: { fontSize: '0.8em', color: '#666' } }, ' (e.g., a * x^2 + b, sin(x), a=3)')),
@@ -250,20 +275,22 @@
           ),
           this.promptsContainer = Div({ class: 'prompts' })
         );
-        this.graph = Div({ class: 'graph-container' });
+        this.resizer = Div({ class: 'resizer', style: { left: this.sidebarWidth + 'px' } });
+        this.graph = Div({ class: 'graph-container', style: { left: this.sidebarWidth + 'px', width: `calc(100% - ${this.sidebarWidth}px)` } });
         this.canvas = document.createElement('canvas');
         this.canvas.style.width = '100%';
         this.canvas.style.height = '100%';
-        this.canvas.width = window.innerWidth - 350;
+        this.canvas.width = window.innerWidth - this.sidebarWidth;
         this.canvas.height = window.innerHeight;
         this.graph.appendChild(this.canvas);
         this.ctx = this.canvas.getContext('2d');
         this.tooltip = Div({ class: 'tooltip' }, 'Hover over graph');
         this.tooltip.style.display = 'none';
         this.setupEventListeners();
-        return Div({}, this.sidebar, this.graph, this.tooltip);
+        return Div({}, this.sidebar, this.resizer, this.graph, this.tooltip);
       }
       setupEventListeners() {
+        this.resizer.addEventListener('mousedown', (e) => this.startResizing(e));
         this.canvas.addEventListener('wheel', (event) => {
           event.preventDefault();
           const zoomFactor = event.deltaY > 0 ? 1.1 : 0.9;
@@ -306,6 +333,35 @@
         this.canvas.addEventListener('mouseleave', () => {
           this.tooltip.style.display = 'none';
         });
+      }
+      startResizing(e) {
+        e.preventDefault();
+        this.isResizing = true;
+        this.startX = e.clientX;
+        this.startWidth = this.sidebarWidth;
+        document.addEventListener('mousemove', (e) => this.resize(e));
+        document.addEventListener('mouseup', () => this.stopResizing());
+      }
+      resize(e) {
+        if (!this.isResizing) return;
+        e.preventDefault();
+        const delta = e.clientX - this.startX;
+        let newWidth = this.startWidth + delta;
+        //if (newWidth < 200) newWidth = 200;
+        //if (newWidth > 500) newWidth = 500;
+        this.sidebarWidth = newWidth;
+        this.sidebar.style.width = newWidth + 'px';
+        this.resizer.style.left = newWidth + 'px';
+        this.graph.style.left = newWidth + 'px';
+        this.graph.style.width = `calc(100% - ${newWidth}px)`;
+        this.canvas.width = this.graph.clientWidth;
+        this.canvas.height = window.innerHeight;
+        this.updateGraph();
+      }
+      stopResizing() {
+        this.isResizing = false;
+        document.removeEventListener('mousemove', this.resize);
+        document.removeEventListener('mouseup', this.stopResizing);
       }
       mathToCanvasX(x) {
         return (x - this.xMin) / (this.xMax - this.xMin) * this.canvas.width;
@@ -386,7 +442,6 @@
                   firstPoint = true;
                 }
               } catch (e) {
-                console.error(e);
                 firstPoint = true;
               }
             }
@@ -428,7 +483,7 @@
           if (expr.isAssignment) {
             const { variable, value } = expr.assignment;
             this.addSlider(variable, value);
-          } else {
+          } else if (!expr.hasError) {
             expr.variables.forEach(v => allVariables.add(v));
           }
         });
@@ -454,6 +509,8 @@
     class Expression {
       constructor(parent) {
         this.parent = parent;
+        this.hasError = false;
+        this.errorMessage = '';
         this.dom = this.render();
         this.mathField = this.dom.querySelector('.math-field');
         this.mathField.addEventListener('input', () => this.onEdit());
@@ -492,35 +549,49 @@
         this.showCodeButton = Button({ class: 'button' }, 'Show Code');
         this.deleteButton = Button({ class: 'button delete-button' }, 'Delete');
         this.codeDisplay = Div({ class: 'code-display' });
-        const container = Div({ class: 'expression-container' }, this.eyeIcon, this.mathField, this.colorInput, this.showCodeButton, this.deleteButton, this.codeDisplay);
+        this.errorDiv = Div({ class: 'error-message', style: { display: 'none' } });
+        const container = Div({ class: 'expression-container' }, this.eyeIcon, this.mathField, this.colorInput, this.showCodeButton, this.deleteButton, this.codeDisplay, this.errorDiv);
         return container;
       }
       onEdit() {
+        // Reset error state at the beginning
+        this.hasError = false;
+        this.errorMessage = '';
+        this.dom.classList.remove('error');
+        this.errorDiv.style.display = 'none';
+        this.jsFunction = null;
+        this.variables = [];
+        this.isAssignment = false;
+        this.assignment = null;
         const mathJsonStr = this.mathField.getValue('math-json');
         let mathJson;
         try {
           mathJson = JSON.parse(mathJsonStr);
         } catch (e) {
-          console.error('Invalid MathJSON:', e);
-          return;
+          this.hasError = true;
+          this.errorMessage = 'Invalid expression';
         }
-        if (Array.isArray(mathJson) && mathJson[0] === 'Equal' && typeof mathJson[1] === 'string' && typeof mathJson[2] === 'number') {
-          this.isAssignment = true;
-          this.assignment = { variable: mathJson[1], value: mathJson[2] };
-          this.jsFunction = null;
-          this.variables = [];
-        } else {
-          this.isAssignment = false;
+        if (!this.hasError) {
           try {
-            this.jsExpression = mathJsonToJs(mathJson);
-            const allVars = getVariablesFromJson(mathJson);
-            this.variables = Array.from(allVars).filter(v => v !== 'x');
-            const code = `return ${this.jsExpression}`;
-            this.jsFunction = new Function('x', ...this.variables, code);
+            if (Array.isArray(mathJson) && mathJson[0] === 'Equal' && typeof mathJson[1] === 'string' && typeof mathJson[2] === 'number') {
+              this.isAssignment = true;
+              this.assignment = { variable: mathJson[1], value: mathJson[2] };
+            } else {
+              this.jsExpression = mathJsonToJs(mathJson);
+              const allVars = getVariablesFromJson(mathJson);
+              this.variables = Array.from(allVars).filter(v => v !== 'x');
+              const code = `return ${this.jsExpression}`;
+              this.jsFunction = new Function('x', ...this.variables, code);
+            }
           } catch (e) {
-            console.error('Error processing expression:', e);
-            this.jsFunction = null;
+            this.hasError = true;
+            this.errorMessage = e.message;
           }
+        }
+        if (this.hasError) {
+          this.dom.classList.add('error');
+          this.errorDiv.textContent = this.errorMessage;
+          this.errorDiv.style.display = 'block';
         }
         window.dispatchEvent(new CustomEvent('expressionChanged'));
       }
