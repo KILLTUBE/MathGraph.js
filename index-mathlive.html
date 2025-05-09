@@ -251,6 +251,13 @@
         this.xMax = 10;
         this.yMin = -10;
         this.yMax = 10;
+        this.isDragging = false;
+        this.startDragX = 0;
+        this.startDragY = 0;
+        this.startXMin = 0;
+        this.startXMax = 0;
+        this.startYMin = 0;
+        this.startYMax = 0;
         this.dom = this.render();
         this.addExpression();
         window.addEventListener('expressionChanged', () => this.handleExpressionChange());
@@ -260,6 +267,16 @@
           this.canvas.height = window.innerHeight;
           this.updateGraph();
         });
+        if (window.location.hash) {
+          const encoded = window.location.hash.substring(1);
+          try {
+            const json = atob(encoded);
+            const state = JSON.parse(json);
+            this.setState(state);
+          } catch (e) {
+            console.error('Failed to load state from URL', e);
+          }
+        }
       }
       render() {
         this.sidebar = Div({ class: 'sidebar', style: { width: this.sidebarWidth + 'px' } },
@@ -273,7 +290,8 @@
             Div({ class: 'section-title' }, 'Sliders'),
             this.slidersContainer = Div({ class: 'sliders' })
           ),
-          this.promptsContainer = Div({ class: 'prompts' })
+          this.promptsContainer = Div({ class: 'prompts' }),
+          this.shareButton = Button({ class: 'button', onclick: () => this.share() }, 'Share')
         );
         this.resizer = Div({ class: 'resizer', style: { left: this.sidebarWidth + 'px' } });
         this.graph = Div({ class: 'graph-container', style: { left: this.sidebarWidth + 'px', width: `calc(100% - ${this.sidebarWidth}px)` } });
@@ -302,35 +320,65 @@
           this.yMax = mathY + (this.yMax - mathY) * zoomFactor;
           this.updateGraph();
         });
+        this.canvas.addEventListener('mousedown', (event) => {
+          if (event.button === 0) {
+            event.preventDefault();
+            this.isDragging = true;
+            this.startDragX = event.offsetX;
+            this.startDragY = event.offsetY;
+            this.startXMin = this.xMin;
+            this.startXMax = this.xMax;
+            this.startYMin = this.yMin;
+            this.startYMax = this.yMax;
+          }
+        });
         this.canvas.addEventListener('mousemove', (event) => {
-          const mathX = this.canvasToMathX(event.offsetX);
-          let info = `x = ${mathX.toFixed(2)}\n`;
-          this.expressions.forEach((expr, index) => {
-            if (!expr.jsFunction || expr.isAssignment || !expr.visible) {
-              info += `f${index+1}(x) = ${expr.isAssignment ? 'assignment' : 'error'}\n`;
-              return;
-            }
-            const scopeValues = expr.variables.map(v => {
-              const slider = this.sliders.find(s => s.variable === v);
-              return slider ? parseFloat(slider.valueInput.value) : 1;
-            });
-            try {
-              const y = expr.jsFunction(mathX, ...scopeValues);
-              if (isFinite(y)) {
-                info += `f${index+1}(x) = ${y.toFixed(2)}\n`;
-              } else {
-                info += `f${index+1}(x) = undefined\n`;
+          if (this.isDragging) {
+            const deltaX = event.offsetX - this.startDragX;
+            const deltaY = event.offsetY - this.startDragY;
+            const deltaMathX = (deltaX / this.canvas.width) * (this.startXMax - this.startXMin);
+            const deltaMathY = (deltaY / this.canvas.height) * (this.startYMax - this.startYMin);
+            this.xMin = this.startXMin - deltaMathX;
+            this.xMax = this.startXMax - deltaMathX;
+            this.yMin = this.startYMin + deltaMathY;
+            this.yMax = this.startYMax + deltaMathY;
+            this.updateGraph();
+          } else {
+            const mathX = this.canvasToMathX(event.offsetX);
+            let info = `x = ${mathX.toFixed(2)}\n`;
+            this.expressions.forEach((expr, index) => {
+              if (!expr.jsFunction || expr.isAssignment || !expr.visible) {
+                info += `f${index+1}(x) = ${expr.isAssignment ? 'assignment' : 'error'}\n`;
+                return;
               }
-            } catch (e) {
-              info += `f${index+1}(x) = error\n`;
-            }
-          });
-          this.tooltip.textContent = info;
-          this.tooltip.style.display = 'block';
-          this.tooltip.style.left = `${event.clientX + 10}px`;
-          this.tooltip.style.top = `${event.clientY + 10}px`;
+              const scopeValues = expr.variables.map(v => {
+                const slider = this.sliders.find(s => s.variable === v);
+                return slider ? parseFloat(slider.valueInput.value) : 1;
+              });
+              try {
+                const y = expr.jsFunction(mathX, ...scopeValues);
+                if (isFinite(y)) {
+                  info += `f${index+1}(x) = ${y.toFixed(2)}\n`;
+                } else {
+                  info += `f${index+1}(x) = undefined\n`;
+                }
+              } catch (e) {
+                info += `f${index+1}(x) = error\n`;
+              }
+            });
+            this.tooltip.textContent = info;
+            this.tooltip.style.display = 'block';
+            this.tooltip.style.left = `${event.clientX + 10}px`;
+            this.tooltip.style.top = `${event.clientY + 10}px`;
+          }
+        });
+        this.canvas.addEventListener('mouseup', (event) => {
+          if (event.button === 0) {
+            this.isDragging = false;
+          }
         });
         this.canvas.addEventListener('mouseleave', () => {
+          this.isDragging = false;
           this.tooltip.style.display = 'none';
         });
       }
@@ -347,8 +395,6 @@
         e.preventDefault();
         const delta = e.clientX - this.startX;
         let newWidth = this.startWidth + delta;
-        //if (newWidth < 200) newWidth = 200;
-        //if (newWidth > 500) newWidth = 500;
         this.sidebarWidth = newWidth;
         this.sidebar.style.width = newWidth + 'px';
         this.resizer.style.left = newWidth + 'px';
@@ -504,6 +550,74 @@
           this.promptsContainer.append(promptDiv);
         });
         this.updateGraph();
+      }
+      getState() {
+        return {
+          expressions: this.expressions.map(expr => ({
+            latex: expr.mathField.value,
+            color: expr.colorInput.value,
+            visible: expr.visible
+          })),
+          sliders: this.sliders.map(slider => ({
+            variable: slider.variable,
+            value: parseFloat(slider.valueInput.value),
+            min: parseFloat(slider.minInput.value),
+            max: parseFloat(slider.maxInput.value),
+            step: parseFloat(slider.stepInput.value)
+          })),
+          view: {
+            xMin: this.xMin,
+            xMax: this.xMax,
+            yMin: this.yMin,
+            yMax: this.yMax
+          }
+        };
+      }
+      setState(state) {
+        this.expressions.forEach(expr => expr.dom.remove());
+        this.expressions = [];
+        this.sliders.forEach(slider => slider.dom.remove());
+        this.sliders = [];
+        this.xMin = state.view.xMin;
+        this.xMax = state.view.xMax;
+        this.yMin = state.view.yMin;
+        this.yMax = state.view.yMax;
+        state.sliders.forEach(sliderState => {
+          const slider = new Slider(this, sliderState.variable, sliderState.value);
+          slider.minInput.value = sliderState.min;
+          slider.maxInput.value = sliderState.max;
+          slider.stepInput.value = sliderState.step;
+          slider.valueInput.value = sliderState.value;
+          slider.rangeInput.min = sliderState.min;
+          slider.rangeInput.max = sliderState.max;
+          slider.rangeInput.step = sliderState.step;
+          slider.rangeInput.value = sliderState.value;
+          this.sliders.push(slider);
+          this.slidersContainer.append(slider.dom);
+        });
+        state.expressions.forEach(exprState => {
+          const expr = new Expression(this);
+          expr.mathField.value = exprState.latex;
+          expr.colorInput.value = exprState.color;
+          expr.visible = exprState.visible;
+          expr.eyeIcon.textContent = exprState.visible ? '👁️' : '🚫';
+          this.expressions.push(expr);
+          this.expressionsContainer.append(expr.dom);
+          expr.onEdit();
+        });
+        this.updateGraph();
+      }
+      share() {
+        const state = this.getState();
+        const json = JSON.stringify(state);
+        const encoded = btoa(json);
+        const url = `${window.location.origin}${window.location.pathname}#${encoded}`;
+        history.replaceState(null, '', url);
+        navigator.clipboard.writeText(url).then(() => {
+          alert('URL copied to clipboard');
+        }).catch(() => {
+          alert(`Share this URL: ${url}`);
+        });
       }
     }
     class Expression {
