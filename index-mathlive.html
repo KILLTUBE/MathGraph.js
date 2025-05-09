@@ -574,14 +574,17 @@
         };
       }
       setState(state) {
+        // Clear existing expressions and sliders
         this.expressions.forEach(expr => expr.dom.remove());
         this.expressions = [];
         this.sliders.forEach(slider => slider.dom.remove());
         this.sliders = [];
+        // Set view boundaries
         this.xMin = state.view.xMin;
         this.xMax = state.view.xMax;
         this.yMin = state.view.yMin;
         this.yMax = state.view.yMax;
+        // Load sliders
         state.sliders.forEach(sliderState => {
           const slider = new Slider(this, sliderState.variable, sliderState.value);
           slider.minInput.value = sliderState.min;
@@ -595,16 +598,19 @@
           this.sliders.push(slider);
           this.slidersContainer.append(slider.dom);
         });
+        // Load expressions with deferred onEdit
         state.expressions.forEach(exprState => {
-          const expr = new Expression(this);
-          expr.mathField.value = exprState.latex;
+          const expr = new Expression(this, exprState.latex);
+          // TODO pass these also to the constructor
           expr.colorInput.value = exprState.color;
           expr.visible = exprState.visible;
           expr.eyeIcon.textContent = exprState.visible ? '👁️' : '🚫';
           this.expressions.push(expr);
           this.expressionsContainer.append(expr.dom);
-          expr.onEdit();
+          // Defer onEdit to ensure mathField is initialized
+          setTimeout(() => expr.onEdit(), 100);
         });
+        // Update the graph
         this.updateGraph();
       }
       share() {
@@ -621,7 +627,8 @@
       }
     }
     class Expression {
-      constructor(parent) {
+      constructor(parent, latex = '') {
+        this.latex = latex;
         this.parent = parent;
         this.hasError = false;
         this.errorMessage = '';
@@ -658,6 +665,7 @@
       render() {
         this.mathField = document.createElement('math-field');
         this.mathField.className = 'math-field';
+        this.mathField.innerText = this.latex;
         this.colorInput = Input({ type: 'color', value: '#000000' });
         this.eyeIcon = Span({ class: 'eye-icon' }, '👁️');
         this.showCodeButton = Button({ class: 'button' }, 'Show Code');
@@ -677,6 +685,12 @@
         this.variables = [];
         this.isAssignment = false;
         this.assignment = null;
+        if (!this.mathField.getValue) {
+          debugger;
+          this.hasError = true;
+          this.errorMessage = 'MathField is not initialized';
+          return;
+        }
         const mathJsonStr = this.mathField.getValue('math-json');
         let mathJson;
         try {
