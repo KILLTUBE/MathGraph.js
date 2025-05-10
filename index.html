@@ -361,7 +361,14 @@
             this.updateGraph();
           } else {
             const mathX = this.canvasToMathX(event.offsetX);
-            let info = `x = ${mathX.toFixed(2)}\n`;
+            const mathY = this.canvasToMathY(event.offsetY);
+            this.canvas.style.cursor = 'crosshair';
+            let info = `x = ${mathX.toFixed(2)} = ${(mathX / Math.PI).toFixed(2)}π\n`;
+            info += `y = ${mathY.toFixed(2)} = ${(mathY / Math.PI).toFixed(2)}π\n`;
+            info += `θ = ${(Math.atan2(mathY, mathX) / Math.PI).toFixed(2)}π\n`;
+            info += `r = ${Math.sqrt(mathX**2 + mathY**2).toFixed(2)}\n`;
+            info += `e^x = ${Math.exp(mathX).toFixed(2)}\n`;
+            info += `ln(x) = ${Math.log(mathX).toFixed(2)}\n`;
             this.expressions.forEach((expr, index) => {
               if (!expr.jsFunction || expr.isAssignment || !expr.visible) {
                 info += `f${index+1}(x) = ${expr.isAssignment ? 'assignment' : 'error'}\n`;
