@@ -268,12 +268,7 @@
         this.startXMax = 0;
         this.startYMin = 0;
         this.startYMax = 0;
-        // New properties for aspect ratio
-        this.k = 1;
-        this.graphWidth = 0;
-        this.graphHeight = 0;
-        this.left = 0;
-        this.top = 0;
+        this.k = 1; // Scaling factor
         this.dom = this.render();
         this.addExpression();
         window.addEventListener('expressionChanged', () => this.handleExpressionChange());
@@ -433,27 +428,33 @@
         document.removeEventListener('mouseup', this.stopResizing);
       }
       mathToCanvasX(x) {
-        return this.left + (x - this.xMin) * this.k;
+        return (x - this.xMin) * this.k;
       }
       mathToCanvasY(y) {
-        return this.top + this.graphHeight - (y - this.yMin) * this.k;
+        return this.canvas.height - (y - this.yMin) * this.k;
       }
       canvasToMathX(canvasX) {
-        return this.xMin + (canvasX - this.left) / this.k;
+        return this.xMin + canvasX / this.k;
       }
       canvasToMathY(canvasY) {
-        return this.yMin + (this.top + this.graphHeight - canvasY) / this.k;
+        return this.yMin + (this.canvas.height - canvasY) / this.k;
       }
       updateGraph() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        // Calculate scaling factor and graph area to maintain 1:1 aspect ratio
-        const xRange = this.xMax - this.xMin;
-        const yRange = this.yMax - this.yMin;
-        this.k = Math.min(this.canvas.width / xRange, this.canvas.height / yRange);
-        this.graphWidth = this.k * xRange;
-        this.graphHeight = this.k * yRange;
-        this.left = (this.canvas.width - this.graphWidth) / 2;
-        this.top = (this.canvas.height - this.graphHeight) / 2;
+        const xCenter = (this.xMin + this.xMax) / 2;
+        const yCenter = (this.yMin + this.yMax) / 2;
+        const W = this.canvas.width;
+        const H = this.canvas.height;
+        const k_x = W / (this.xMax - this.xMin);
+        const k_y = H / (this.yMax - this.yMin);
+        const k = Math.min(k_x, k_y);
+        const deltaX = W / k;
+        const deltaY = H / k;
+        this.xMin = xCenter - deltaX / 2;
+        this.xMax = xCenter + deltaX / 2;
+        this.yMin = yCenter - deltaY / 2;
+        this.yMax = yCenter + deltaY / 2;
+        this.k = k;
         const xStep = (this.xMax - this.xMin) / 10;
         const yStep = (this.yMax - this.yMin) / 10;
         // Draw grid lines
@@ -461,31 +462,31 @@
         for (let x = Math.ceil(this.xMin / xStep) * xStep; x <= this.xMax; x += xStep) {
           const canvasX = this.mathToCanvasX(x);
           this.ctx.beginPath();
-          this.ctx.moveTo(canvasX, this.top);
-          this.ctx.lineTo(canvasX, this.top + this.graphHeight);
+          this.ctx.moveTo(canvasX, 0);
+          this.ctx.lineTo(canvasX, H);
           this.ctx.stroke();
         }
         for (let y = Math.ceil(this.yMin / yStep) * yStep; y <= this.yMax; y += yStep) {
           const canvasY = this.mathToCanvasY(y);
           this.ctx.beginPath();
-          this.ctx.moveTo(this.left, canvasY);
-          this.ctx.lineTo(this.left + this.graphWidth, canvasY);
+          this.ctx.moveTo(0, canvasY);
+          this.ctx.lineTo(W, canvasY);
           this.ctx.stroke();
         }
         // Draw axes
         this.ctx.strokeStyle = 'black';
         const y0 = this.mathToCanvasY(0);
-        if (y0 >= this.top && y0 <= this.top + this.graphHeight) {
+        if (y0 >= 0 && y0 <= H) {
           this.ctx.beginPath();
-          this.ctx.moveTo(this.left, y0);
-          this.ctx.lineTo(this.left + this.graphWidth, y0);
+          this.ctx.moveTo(0, y0);
+          this.ctx.lineTo(W, y0);
           this.ctx.stroke();
         }
         const x0 = this.mathToCanvasX(0);
-        if (x0 >= this.left && x0 <= this.left + this.graphWidth) {
+        if (x0 >= 0 && x0 <= W) {
           this.ctx.beginPath();
-          this.ctx.moveTo(x0, this.top);
-          this.ctx.lineTo(x0, this.top + this.graphHeight);
+          this.ctx.moveTo(x0, 0);
+          this.ctx.lineTo(x0, H);
           this.ctx.stroke();
         }
         // Plot expressions
@@ -642,7 +643,6 @@
           // Defer onEdit to ensure mathField is initialized
           setTimeout(() => expr.onEdit(), 100);
         });
-        // Update the graph
         this.updateGraph();
       }
       share() {
