@@ -135,7 +135,10 @@
 </head>
 <body>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathquill/0.10.1-a/mathquill.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathquill/0.10.1-a/mathquill.js"></script>
+  <!--
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathquill/0.10.1-a/mathquill.min.js"></script>
+  -->
   <script>
     // JSX-like helper
     function genJsx(tagname) {
@@ -178,6 +181,29 @@
       js = js.replace(/\\sqrt\{(\w+)\}/g, 'Math.sqrt($1)');
       js = js.replace(/\\pi/g, 'Math.PI');
       js = js.replace(/\\e/g, 'Math.E');
+
+
+      // Convert something like "abc" into "a * b * c"
+      js = js.replace(/(\w)(\w)/g, '$1 * $2');
+      js = js.replace(/(\w)(\w)/g, '$1 * $2');
+      js = js.replace(/(\w)(\w)/g, '$1 * $2');
+      // But we have to ignore the case where it's a function name like "sin"
+      
+      //// So we need to do it multiple times. So we match entire words, in callback check the ignore list, the .split('')!
+      ////First check entire word
+      //const ignoreList = ['frac', 'cdot', 'sin', 'cos', 'tan', 'sqrt', 'pi', 'e'];
+      //// Match entire words
+      //js = js.replace(/(\w+)/g, (match, p1) => {
+      //  console.log("match", match, "p1", p1);
+      //  if (ignoreList.includes(p1)) {
+      //    return p1;
+      //  }
+      //  return p1.split('').join(' * ');
+      //});
+
+      // Example for above: "abc" -> "a * b * c" JS: "abc".replace(/(\w)(\w)/g, '$1 * $2')
+      // (this actually fails into "a * ac" so just do it multiple times
+
       js = js.replace(/\^/g, '**');
       // Turn (x)x into (x)*x just based on the brackets
       js = js.replace(/\)(\w)/g, ')*$1');
@@ -187,6 +213,9 @@
       // Turn (1 / x)*x*\left(1-y\right) into (1 / x)*x*(1-y)
       js = js.replace(/\\left\(/g, '(');
       js = js.replace(/\\right\)/g, ')');
+      // Math.E**{x * y * z} into Math.E**(x * y * z)
+      // focus on {...}
+      js = js.replace(/\{([^}]+)\}/g, '($1)');
       return js;
     }
     function getVariables(expression) {
