@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MathGraph.js</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
   <script src="node_modules/mathlive/dist/mathlive.mjs" type="module"></script>
   <script src="node_modules/@cortex-js/compute-engine/dist/compute-engine.esm.js" type="module"></script>
   <style>
@@ -159,7 +160,6 @@
   </style>
 </head>
 <body>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
   <script>
     // JSX-like helper
     function genJsx(tagname) {
@@ -193,6 +193,16 @@
       return this.value;
     }
     const constants = { Pi: 'Math.PI', ExponentialE: 'Math.E' };
+    function destroy(_) {
+      if (_ instanceof Array) {
+        _.forEach(destroy);
+        _.length = 0;
+      } else if (_.destroy) {
+        _.destroy();
+      } else {
+        console.error('Cannot destroy', _);
+      }
+    }
     function mathJsonToJs(json) {
       if (typeof json === 'string') {
         if (json in constants) {
@@ -258,6 +268,12 @@
         this.startXMax = 0;
         this.startYMin = 0;
         this.startYMax = 0;
+        // New properties for aspect ratio
+        this.k = 1;
+        this.graphWidth = 0;
+        this.graphHeight = 0;
+        this.left = 0;
+        this.top = 0;
         this.dom = this.render();
         this.addExpression();
         window.addEventListener('expressionChanged', () => this.handleExpressionChange());
@@ -280,7 +296,7 @@
       }
       render() {
         this.sidebar = Div({ class: 'sidebar', style: { width: this.sidebarWidth + 'px' } },
-          Div({ class: 'header' }, 'Math Graphing Tool'),
+          Div({ class: 'header' }, 'MathGraph.js'),
           Div({ class: 'section' },
             Div({ class: 'section-title' }, 'Expressions', Span({ style: { fontSize: '0.8em', color: '#666' } }, ' (e.g., a * x^2 + b, sin(x), a=3)')),
             this.expressionsContainer = Div({ class: 'expressions' }),
@@ -410,51 +426,62 @@
         document.removeEventListener('mouseup', this.stopResizing);
       }
       mathToCanvasX(x) {
-        return (x - this.xMin) / (this.xMax - this.xMin) * this.canvas.width;
+        return this.left + (x - this.xMin) * this.k;
       }
       mathToCanvasY(y) {
-        return (this.yMax - y) / (this.yMax - this.yMin) * this.canvas.height;
+        return this.top + this.graphHeight - (y - this.yMin) * this.k;
       }
       canvasToMathX(canvasX) {
-        return this.xMin + (canvasX / this.canvas.width) * (this.xMax - this.xMin);
+        return this.xMin + (canvasX - this.left) / this.k;
       }
       canvasToMathY(canvasY) {
-        return this.yMax - (canvasY / this.canvas.height) * (this.yMax - this.yMin);
+        return this.yMin + (this.top + this.graphHeight - canvasY) / this.k;
       }
       updateGraph() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        // Calculate scaling factor and graph area to maintain 1:1 aspect ratio
+        const xRange = this.xMax - this.xMin;
+        const yRange = this.yMax - this.yMin;
+        this.k = Math.min(this.canvas.width / xRange, this.canvas.height / yRange);
+        this.graphWidth = this.k * xRange;
+        this.graphHeight = this.k * yRange;
+        this.left = (this.canvas.width - this.graphWidth) / 2;
+        this.top = (this.canvas.height - this.graphHeight) / 2;
         const xStep = (this.xMax - this.xMin) / 10;
         const yStep = (this.yMax - this.yMin) / 10;
+        // Draw grid lines
         this.ctx.strokeStyle = '#ddd';
         for (let x = Math.ceil(this.xMin / xStep) * xStep; x <= this.xMax; x += xStep) {
           const canvasX = this.mathToCanvasX(x);
           this.ctx.beginPath();
-          this.ctx.moveTo(canvasX, 0);
-          this.ctx.lineTo(canvasX, this.canvas.height);
+          this.ctx.moveTo(canvasX, this.top);
+          this.ctx.lineTo(canvasX, this.top + this.graphHeight);
           this.ctx.stroke();
         }
         for (let y = Math.ceil(this.yMin / yStep) * yStep; y <= this.yMax; y += yStep) {
           const canvasY = this.mathToCanvasY(y);
           this.ctx.beginPath();
-          this.ctx.moveTo(0, canvasY);
-          this.ctx.lineTo(this.canvas.width, canvasY);
+          this.ctx.moveTo(this.left, canvasY);
+          this.ctx.lineTo(this.left + this.graphWidth, canvasY);
           this.ctx.stroke();
         }
+        // Draw axes
         this.ctx.strokeStyle = 'black';
         const y0 = this.mathToCanvasY(0);
-        if (y0 >= 0 && y0 <= this.canvas.height) {
+        if (y0 >= this.top && y0 <= this.top + this.graphHeight) {
           this.ctx.beginPath();
-          this.ctx.moveTo(0, y0);
-          this.ctx.lineTo(this.canvas.width, y0);
+          this.ctx.moveTo(this.left, y0);
+          this.ctx.lineTo(this.left + this.graphWidth, y0);
           this.ctx.stroke();
         }
         const x0 = this.mathToCanvasX(0);
-        if (x0 >= 0 && x0 <= this.canvas.width) {
+        if (x0 >= this.left && x0 <= this.left + this.graphWidth) {
           this.ctx.beginPath();
-          this.ctx.moveTo(x0, 0);
-          this.ctx.lineTo(x0, this.canvas.height);
+          this.ctx.moveTo(x0, this.top);
+          this.ctx.lineTo(x0, this.top + this.graphHeight);
           this.ctx.stroke();
         }
+        // Plot expressions
         const numPoints = 1000;
         const xValues = Array.from({length: numPoints}, (_, i) => this.xMin + i * (this.xMax - this.xMin) / (numPoints - 1));
         const existingSliders = new Set(this.sliders.map(s => s.variable));
@@ -575,10 +602,8 @@
       }
       setState(state) {
         // Clear existing expressions and sliders
-        this.expressions.forEach(expr => expr.dom.remove());
-        this.expressions = [];
-        this.sliders.forEach(slider => slider.dom.remove());
-        this.sliders = [];
+        destroy(this.expressions);
+        destroy(this.sliders);
         // Set view boundaries
         this.xMin = state.view.xMin;
         this.xMax = state.view.xMax;
@@ -722,6 +747,9 @@
           this.errorDiv.style.display = 'block';
         }
         window.dispatchEvent(new CustomEvent('expressionChanged'));
+      }
+      destroy() {
+        this.dom.remove();
       }
     }
     class Slider {
