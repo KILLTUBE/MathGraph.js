@@ -718,9 +718,9 @@
         this.isAssignment = false;
         this.assignment = null;
         if (!this.mathField.getValue) {
-          debugger;
           this.hasError = true;
           this.errorMessage = 'MathField is not initialized';
+          console.error("MathInterface#onEdit> Use \"window.addEventListener('load', (event) => {...}\" to ensure MathLive is ready.");
           return;
         }
         const mathJsonStr = this.mathField.getValue('math-json');
@@ -825,9 +825,11 @@
         this.deleteButton.addEventListener('click', () => this.destroy());
       }
     }
-    const app = new MathInterface();
-    document.body.append(app.dom);
-    window.app = app;
+    window.addEventListener('load', (event) => {
+      const app = new MathInterface();
+      document.body.append(app.dom);
+      window.app = app;
+    });  
   </script>
 </body>
 </html>
