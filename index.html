@@ -185,6 +185,8 @@
     const Button = genJsx("button");
     const Input = genJsx("input");
     const Span = genJsx("span");
+    const Select = genJsx("select");
+    const Option = genJsx("option");
     // Enhance input elements to return numbers
     HTMLInputElement.prototype.valueOf = function() {
       if (this.type === 'number' || this.type === 'range') {
@@ -269,6 +271,13 @@
         this.startYMin = 0;
         this.startYMax = 0;
         this.k = 1; // Scaling factor
+        this.easingFunctions = {
+          linear: t => t,
+          quadIn: t => t * t,
+          quadOut: t => t * (2 - t),
+          quadInOut: t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
+          sineInOut: t => 0.5 * (1 - Math.cos(Math.PI * t))
+        };
         this.dom = this.render();
         this.addExpression();
         window.addEventListener('expressionChanged', () => this.handleExpressionChange());
@@ -598,7 +607,9 @@
             value: parseFloat(slider.valueInput.value),
             min: parseFloat(slider.minInput.value),
             max: parseFloat(slider.maxInput.value),
-            step: parseFloat(slider.stepInput.value)
+            step: parseFloat(slider.stepInput.value),
+            isPlaying: slider.isPlaying,
+            easingMethod: slider.easingSelect.value
           })),
           view: {
             xMin: this.xMin,
@@ -619,15 +630,7 @@
         this.yMax = state.view.yMax;
         // Load sliders
         state.sliders.forEach(sliderState => {
-          const slider = new Slider(this, sliderState.variable, sliderState.value);
-          slider.minInput.value = sliderState.min;
-          slider.maxInput.value = sliderState.max;
-          slider.stepInput.value = sliderState.step;
-          slider.valueInput.value = sliderState.value;
-          slider.rangeInput.min = sliderState.min;
-          slider.rangeInput.max = sliderState.max;
-          slider.rangeInput.step = sliderState.step;
-          slider.rangeInput.value = sliderState.value;
+          const slider = new Slider(this, sliderState.variable, sliderState.value, sliderState.min, sliderState.max, sliderState.step, sliderState.isPlaying, sliderState.easingMethod);
           this.sliders.push(slider);
           this.slidersContainer.append(slider.dom);
         });
@@ -760,20 +763,39 @@
       }
     }
     class Slider {
-      constructor(parent, variable, initialValue = 1) {
+      constructor(parent, variable, initialValue = 1, min = -10, max = 10, step = 0.1, isPlaying = false, easingMethod = 'linear') {
         this.parent = parent;
         this.variable = variable;
         this.initialValue = initialValue;
+        this.min = min;
+        this.max = max;
+        this.step = step;
+        this.isPlaying = isPlaying;
+        this.easingMethod = easingMethod;
+        this.duration = 4000; // 4-second cycle
+        this.startTime = null;
         this.dom = this.render();
         this.setupEventListeners();
+        if (this.isPlaying) {
+          this.play();
+        }
       }
       render() {
         this.label = Div({ class: 'slider-label' }, `Variable: ${this.variable}`);
-        this.minInput = Input({ type: 'number', class: 'slider-input', value: -10 });
-        this.maxInput = Input({ type: 'number', class: 'slider-input', value: 10 });
-        this.stepInput = Input({ type: 'number', class: 'slider-input', value: 0.1 });
+        this.minInput = Input({ type: 'number', class: 'slider-input', value: this.min });
+        this.maxInput = Input({ type: 'number', class: 'slider-input', value: this.max });
+        this.stepInput = Input({ type: 'number', class: 'slider-input', value: this.step });
         this.valueInput = Input({ type: 'number', class: 'slider-input', value: this.initialValue });
-        this.rangeInput = Input({ type: 'range', class: 'range-slider', min: -10, max: 10, step: 0.1, value: this.initialValue });
+        this.rangeInput = Input({ type: 'range', class: 'range-slider', min: this.min, max: this.max, step: this.step, value: this.initialValue });
+        this.playPauseButton = Button({ class: 'button' }, this.isPlaying ? 'Pause' : 'Play');
+        this.easingSelect = Select(
+          null,
+          Option({ value: 'linear', selected: this.easingMethod === 'linear' }, 'Linear'),
+          Option({ value: 'quadIn', selected: this.easingMethod === 'quadIn' }, 'Quad In'),
+          Option({ value: 'quadOut', selected: this.easingMethod === 'quadOut' }, 'Quad Out'),
+          Option({ value: 'quadInOut', selected: this.easingMethod === 'quadInOut' }, 'Quad In Out'),
+          Option({ value: 'sineInOut', selected: this.easingMethod === 'sineInOut' }, 'Sine In Out'),
+        );
         this.deleteButton = Button({ class: 'button delete-button' }, 'Delete');
         return Div({ class: 'slider-container' },
           this.label,
@@ -782,6 +804,8 @@
           Div({}, 'Step: ', this.stepInput),
           Div({}, 'Value: ', this.valueInput),
           this.rangeInput,
+          Div({}, 'Easing: ', this.easingSelect),
+          this.playPauseButton,
           this.deleteButton
         );
       }
@@ -789,6 +813,13 @@
         this.parent.removeSlider(this);
       }
       setupEventListeners() {
+        this.playPauseButton.addEventListener('click', () => {
+          if (this.isPlaying) {
+            this.pause();
+          } else {
+            this.play();
+          }
+        });
         this.rangeInput.addEventListener('input', () => {
           this.valueInput.value = this.rangeInput.value;
           window.dispatchEvent(new CustomEvent('sliderChanged'));
@@ -823,6 +854,37 @@
           window.dispatchEvent(new CustomEvent('sliderChanged'));
         });
         this.deleteButton.addEventListener('click', () => this.destroy());
+      }
+      play() {
+        this.isPlaying = true;
+        this.startTime = Date.now();
+        this.playPauseButton.textContent = 'Pause';
+        this.animate();
+      }
+      pause() {
+        this.isPlaying = false;
+        this.playPauseButton.textContent = 'Play';
+      }
+      animate() {
+        if (!this.isPlaying) return;
+        const now = Date.now();
+        const elapsed = now - this.startTime;
+        const T = this.duration;
+        const u = (elapsed / (T / 2)) % 2;
+        const easing = this.parent.easingFunctions[this.easingSelect.value];
+        let eased;
+        if (u <= 1) {
+          eased = easing(u);
+        } else {
+          eased = easing(2 - u);
+        }
+        const min = parseFloat(this.minInput.value);
+        const max = parseFloat(this.maxInput.value);
+        const value = min + (max - min) * eased;
+        this.valueInput.value = value;
+        this.rangeInput.value = value;
+        window.dispatchEvent(new CustomEvent('sliderChanged'));
+        requestAnimationFrame(() => this.animate());
       }
     }
     window.addEventListener('load', (event) => {
